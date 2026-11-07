@@ -12,6 +12,38 @@ class LedgerService:
         self.records = store.load()
         self.lock = RLock()
 
+    
+    def export_backup(self):
+        """导出完整账本，保持现有 JSON 格式。"""
+        with self.lock:
+            return {
+                "version": 1,
+                "records": [
+                    record.to_dict()
+                    for record in self.records
+                ],
+            }
+
+    def restore_backup(self, data):
+        """校验后全量恢复账本。"""
+        from .storage import validate_backup
+
+        # 先完成所有数据校验
+        records = validate_backup(data)
+
+        # 使用原有存储逻辑进行原子保存
+        with self.lock:
+            self.store.save(records)
+
+            # 保存成功后才更新内存
+            self.records = records
+
+        return {
+            "ok": True,
+            "restored_count": len(records),
+        }
+
+
     def add(self, payload):
         record = Record.create(payload)
         with self.lock:
