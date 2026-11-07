@@ -56,3 +56,44 @@ class JsonStore:
         finally:
             if temporary_path and temporary_path.exists():
                 temporary_path.unlink(missing_ok=True)
+def validate_backup(data):
+    """校验导入的 JSON 备份，返回校验通过的记录。"""
+    if not isinstance(data, dict):
+        raise ValueError("备份文件必须是 JSON 对象")
+
+    if type(data.get("version")) is not int or data["version"] != 1:
+        raise ValueError("不支持的备份版本")
+
+    items = data.get("records")
+    if not isinstance(items, list):
+        raise ValueError("备份记录必须是数组")
+
+    records = []
+    seen_ids = set()
+
+    for index, item in enumerate(items, start=1):
+        try:
+            if not isinstance(item, dict):
+                raise ValueError("记录必须是对象")
+
+            required = {
+                "id", "date", "kind", "amount_cents",
+                "category", "note", "created_at"
+            }
+            if not required.issubset(item):
+                raise ValueError("记录缺少必要字段")
+
+            record = Record.from_dict(item)
+
+            if record.id in seen_ids:
+                raise ValueError("存在重复的记录 ID")
+
+            seen_ids.add(record.id)
+            records.append(record)
+
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"第 {index} 条记录校验失败：{exc}"
+            ) from exc
+
+    return records
