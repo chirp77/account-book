@@ -71,6 +71,14 @@ def create_server(data_file, port=8000, budget_file=None):
                     if origin and origin not in {f"http://{host}" for host in hosts}:
                         return self.send_json(403, {"error": "不允许跨站修改账本"})
                 url = urlsplit(self.path)
+                if method == "GET" and url.path == "/api/backup":
+                    body = (json.dumps(ledger.export_backup(), ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+                    return self.respond(200, body, "application/json; charset=utf-8",
+                                        "attachment; filename=account-book-backup.json")
+                if method == "POST" and url.path in ("/api/restore/preview", "/api/restore"):
+                    data = self.read_json(limit=5 * 1024 * 1024)
+                    result = ledger.preview_backup(data) if url.path.endswith("/preview") else ledger.restore_backup(data)
+                    return self.send_json(200, result)
                 if url.path.startswith("/api/budgets/") and method in ("GET", "PUT"):
                     month = url.path.removeprefix("/api/budgets/")
                     if method == "GET":
@@ -109,11 +117,11 @@ def create_server(data_file, port=8000, budget_file=None):
             except OSError:
                 self.send_json(500, {"error": "文件操作失败，请查看终端并检查文件是否完整"})
 
-        def read_json(self):
+        def read_json(self, limit=16_384):
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("请求内容必须为 JSON")
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 16_384:
+            if not 0 < length <= limit:
                 raise ValueError("请求内容为空或过大")
             try:
                 return json.loads(self.rfile.read(length).decode("utf-8"))
@@ -133,8 +141,10 @@ def create_server(data_file, port=8000, budget_file=None):
             self.end_headers()
             self.wfile.write(body)
 
-        def respond(self, status, body, content_type):
+        def respond(self, status, body, content_type, disposition=None):
             self.send_response(status)
+            if disposition:
+                self.send_header("Content-Disposition", disposition)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")

@@ -5,7 +5,10 @@ from decimal import Decimal, ROUND_HALF_UP
 from threading import RLock
 
 from .models import CATEGORIES, Record, parse_amount, parse_date, parse_month
-from .storage import StorageError
+from pathlib import Path
+import os
+import tempfile
+from .storage import StorageError, validate_backup
 
 
 class LedgerService:
@@ -145,3 +148,41 @@ class LedgerService:
                                    for name, amount in sorted(by_category.items(), key=lambda item: (-item[1], item[0]))],
             "categories": CATEGORIES, "total_count": total_count,
         }
+
+    def export_backup(self):
+        with self.lock:
+            return {'version': 1, 'records': [record.to_dict() for record in self.records]}
+
+    def restore_backup(self, data):
+        records = validate_backup(data)
+        with self.lock:
+            temporary_path = None
+            backup_path = Path(str(self.store.path) + '.before-restore.bak')
+            try:
+                old_raw = self.store.path.read_bytes() if self.store.path.exists() else None
+                if old_raw != self.store._snapshot:
+                    raise StorageError('账本已被其他程序修改，请重新加载后重试')
+                if old_raw is not None:
+                    backup_path.parent.mkdir(parents=True, exist_ok=True)
+                    with tempfile.NamedTemporaryFile(dir=backup_path.parent,
+                            prefix='.backup-', suffix='.tmp', delete=False) as handle:
+                        temporary_path = Path(handle.name)
+                        handle.write(old_raw)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary_path, backup_path)
+                    temporary_path = None
+                self.store.save(records)
+                self.records = records
+            except OSError as exc:
+                raise StorageError('恢复失败，原账本未被替换') from exc
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
+        return {'ok': True, 'restored_count': len(records)}
+
+    def preview_backup(self, data):
+        records = validate_backup(data)
+        dates = sorted(record.date for record in records)
+        return {"valid": True, "count": len(records),
+                "start": dates[0] if dates else None, "end": dates[-1] if dates else None}

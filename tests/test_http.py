@@ -105,5 +105,22 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request("/api/records.csv?start=invalid")[0], 400)
 
 
+
+
+    def test_backup_preview_restore_http(self):
+        status, body, headers = self.request('/api/backup')
+        self.assertEqual(status, 200)
+        self.assertIn('attachment', headers['Content-Disposition'])
+        backup = json.loads(body)
+        status, body, _ = self.request('/api/restore/preview', 'POST', backup)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)['valid'])
+        self.assertEqual(json.loads(self.request('/api/backup')[1]), backup)
+        self.assertEqual(self.request('/api/restore', 'POST', {'version':2,'records':[]})[0], 400)
+        self.assertEqual(json.loads(self.request('/api/backup')[1]), backup)
+        self.assertEqual(self.request('/api/restore', 'POST', backup)[0], 200)
+        self.assertEqual(json.loads(self.request('/api/backup')[1]), backup)
+
+
 if __name__ == "__main__":
     unittest.main()
